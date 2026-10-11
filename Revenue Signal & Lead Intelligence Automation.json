@@ -1,0 +1,497 @@
+{
+  "name": "Revenue Signal & Lead Intelligence Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "revenue-signal-intelligence",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        96,
+        128
+      ],
+      "id": "fda1ac6f-c213-490a-9caf-7c3d975d3f7b",
+      "name": "Webhook",
+      "webhookId": "24bcc5d4-4365-4e7f-bf03-418531fa309b"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-3-flash-preview"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a business signal extraction system.\n\nAnalyze the customer/account activity provided by the user.\n\nExtract only these business signals:\n\n1. engagement_signal\n2. renewal_signal\n3. expansion_signal\n4. risk_signal\n\nAllowed values:\nLOW\nMEDIUM\nHIGH\nUNKNOWN\n\nAlso return:\n- confidence: number between 0 and 1\n- reasoning: short list explaining the extracted signals\n\nImportant rules:\n- Do not assign an overall priority.\n- Do not recommend an action.\n- Do not invent facts.\n- If evidence is insufficient, use UNKNOWN.\n- Return valid JSON only.\n\n{{ $json.body.account_name }}\n{{$json.body.event_text}}\n"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        288,
+        128
+      ],
+      "id": "ID",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": null,
+          "name": "",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─── Step 1: Gemini ka text nikaalo ───\nconst gemini = $json;\nconst rawText = gemini?.content?.parts?.[0]?.text;\nconst account = $('Webhook').item.json.body;\n\n// ─── Step 2: Text ko JSON mein parse karo ───\nlet ai;\ntry {\n  const cleaned = String(rawText || \"\")\n    .replace(/```json/gi, \"\")\n    .replace(/```/g, \"\")\n    .trim();\n  ai = JSON.parse(cleaned);\n} catch (e) {\n  ai = {};\n}\n\n// ─── Step 3: Signals normalize karo ───\nconst allowed = [\"LOW\", \"MEDIUM\", \"HIGH\", \"UNKNOWN\"];\n\nfunction normalizeSignal(value) {\n  const signal = String(value ?? \"UNKNOWN\").toUpperCase();\n  return allowed.includes(signal) ? signal : \"UNKNOWN\";\n}\n\nconst confidence = Number(ai.confidence);\n\nreturn [{\n  json: {\n    event_id: account.event_id, \n    event_type : account.event_type,\n    account_id: account.account_id,\n    account_name: account.account_name,\n\n    engagement_signal: normalizeSignal(ai.engagement_signal),\n    renewal_signal:    normalizeSignal(ai.renewal_signal),\n    expansion_signal:  normalizeSignal(ai.expansion_signal),\n    risk_signal:       normalizeSignal(ai.risk_signal),\n\n    confidence: Number.isFinite(confidence)\n      ? Math.min(Math.max(confidence, 0), 1)\n      : 0,\n\n    reasoning: Array.isArray(ai.reasoning) ? ai.reasoning : []\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        128
+      ],
+      "id": "e9d4c1d5-b671-4260-b0b9-df4ba2ad5ea7",
+      "name": "Validate + Normalize"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "42aa9dd9-cc24-4810-b6b0-78cf494d6bd8",
+              "leftValue": "={{ $json.priority }}",
+              "rightValue": "HIGH",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1056,
+        368
+      ],
+      "id": "9dba151c-ef37-4125-910a-6888d513a5c9",
+      "name": "IF Priority = HIGH?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://webhook.site/7427817b-065f-485b-ad5c-4bfa908f5890",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"event_id\": \"={{ $('Calculate Signal Score+Priority').item.json.event_id }}\",\n  \"account_id\": \"={{ $('Calculate Signal Score+Priority').item.json.account_id }}\",\n  \"account_name\": \"={{ $('Calculate Signal Score+Priority').item.json.account_name }}\",\n  \"priority\": \"={{ $('Calculate Signal Score+Priority').item.json.priority }}\",\n  \"signal_score\": \"={{ $('Calculate Signal Score+Priority').item.json.total_signal_score }}\",\n  \"action\": \"CREATE_URGENT_TASK\",\n  \"signals\": {\n    \"engagement\": \"={{ $('Calculate Signal Score+Priority').item.json.engagement_signal }}\",\n    \"renewal\": \"={{ $('Calculate Signal Score+Priority').item.json.renewal_signal }}\",\n    \"expansion\": \"={{ $('Calculate Signal Score+Priority').item.json.expansion_signal }}\",\n    \"risk\": \"={{ $('Calculate Signal Score+Priority').item.json.risk_signal }}\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        240
+      ],
+      "id": "e3150e77-d48f-455f-8ec8-dc5784dd0c84",
+      "name": "CRM — Create Urgent Task"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://webhook.site/7427817b-065f-485b-ad5c-4bfa908f5890",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"event_id\": \"={{ $('Calculate Signal Score+Priority').item.json.event_id }}\",\n  \"account_id\": \"={{ $('Calculate Signal Score+Priority').item.json.account_id }}\",\n  \"account_name\": \"={{ $('Calculate Signal Score+Priority').item.json.account_name }}\",\n  \"priority\": \"={{ $('Calculate Signal Score+Priority').item.json.priority }}\",\n  \"signal_score\": \"={{ $('Calculate Signal Score+Priority').item.json.total_signal_score }}\",\n  \"action\": \"UPDATE_SIGNAL\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        480
+      ],
+      "id": "61d1b480-f67d-42a5-9623-cd8169cf884f",
+      "name": "CRM — Update Signal"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list",
+          "cachedResultName": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "revenue_signal_events",
+          "mode": "list",
+          "cachedResultName": "revenue_signal_events"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "event_id": "={{ $json.event_id }}",
+            "event_type": "={{ $json.event_type }}",
+            "account_id": "={{ $json.account_id }}",
+            "account_name": "={{ $json.account_name }}",
+            "priority": "={{ $json.priority }}",
+            "signal_score": "={{ $json.total_signal_score }}",
+            "engagement_signal": "={{ $json.engagement_signal }}",
+            "renewal_signal": "={{ $json.renewal_signal }}",
+            "expansion_signal": "={{ $json.expansion_signal }}",
+            "risk_signal": "={{ $json.risk_signal }}",
+            "action_type": "={{ $json.priority === 'HIGH' ? 'CREATE_URGENT_TASK' : 'UPDATE_SIGNAL' }}",
+            "raw_payload": "={{ JSON.stringify($json) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "event_id",
+              "displayName": "event_id",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "account_id",
+              "displayName": "account_id",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "account_name",
+              "displayName": "account_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "signal_score",
+              "displayName": "signal_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "priority",
+              "displayName": "priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "engagement_signal",
+              "displayName": "engagement_signal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "renewal_signal",
+              "displayName": "renewal_signal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "expansion_signal",
+              "displayName": "expansion_signal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "risk_signal",
+              "displayName": "risk_signal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "action_type",
+              "displayName": "action_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "action_status",
+              "displayName": "action_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "raw_payload",
+              "displayName": "raw_payload",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1088,
+        128
+      ],
+      "id": "ID",
+      "name": "Insert rows in a table",
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════\n// STEP 1: SIGNAL SCORING (ganna)\n// ═══════════════════════════════════════════\nconst data = $json;\n\nconst signalValue = {\n  HIGH: 1,\n  MEDIUM: 0.5,\n  LOW: 0,\n  UNKNOWN: 0\n};\n\nconst weights = {\n  engagement_signal: 25,\n  renewal_signal: 30,\n  expansion_signal: 30,\n  risk_signal: 15\n};\n\nfunction calculateSignal(signal, weight) {\n  return (signalValue[signal] ?? 0) * weight;\n}\n\nconst engagementScore = calculateSignal(data.engagement_signal, weights.engagement_signal);\nconst renewalScore    = calculateSignal(data.renewal_signal,    weights.renewal_signal);\nconst expansionScore  = calculateSignal(data.expansion_signal,  weights.expansion_signal);\nconst riskScore       = calculateSignal(data.risk_signal,       weights.risk_signal);\n\nconst totalScore = engagementScore + renewalScore + expansionScore + riskScore;\n\n// ═══════════════════════════════════════════\n// STEP 2: PRIORITY DECISION (business rule)\n// ═══════════════════════════════════════════\nlet priority;\nif (totalScore >= 70) {\n  priority = \"HIGH\";\n} else if (totalScore >= 40) {\n  priority = \"MEDIUM\";\n} else {\n  priority = \"LOW\";\n}\n\n// ═══════════════════════════════════════════\n// OUTPUT\n// ═══════════════════════════════════════════\nreturn [{\n  json: {\n    ...data,\n    engagement_score: engagementScore,\n    renewal_score: renewalScore,\n    expansion_score: expansionScore,\n    risk_score: riskScore,\n    total_signal_score: totalScore,\n    priority\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        128
+      ],
+      "id": "e0c95586-2f76-43f0-b002-f8cbd7b846ab",
+      "name": "Calculate Signal Score+Priority"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE revenue_signal_events\nSET\n    action_status = 'COMPLETED',\n    updated_at = NOW()\nWHERE event_id = $1\nRETURNING event_id, action_status, updated_at;",
+        "options": {
+          "queryReplacement": "={{ $('IF Priority = HIGH?').item.json.event_id }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1568,
+        240
+      ],
+      "id": "ID",
+      "name": "DB — Mark Urgent Action Completed",
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_ID",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE revenue_signal_events\nSET\n    action_status = 'COMPLETED',\n    updated_at = NOW()\nWHERE event_id = $1\nRETURNING event_id, action_status, updated_at;",
+        "options": {
+          "queryReplacement": "={{ $('Calculate Signal Score+Priority').item.json.event_id }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1584,
+        480
+      ],
+      "id": "ID",
+      "name": "DB — Mark Signal Update Completed",
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_ID",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Validate + Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate + Normalize": {
+      "main": [
+        [
+          {
+            "node": "Calculate Signal Score+Priority",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Priority = HIGH?": {
+      "main": [
+        [
+          {
+            "node": "CRM — Create Urgent Task",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CRM — Update Signal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM — Create Urgent Task": {
+      "main": [
+        [
+          {
+            "node": "DB — Mark Urgent Action Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Signal Score+Priority": {
+      "main": [
+        [
+          {
+            "node": "Insert rows in a table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert rows in a table": {
+      "main": [
+        [
+          {
+            "node": "IF Priority = HIGH?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM — Update Signal": {
+      "main": [
+        [
+          {
+            "node": "DB — Mark Signal Update Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "55a95641-5ec0-4747-8d4c-f1ab551a91b5",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ac6f4f0d3cab462720d3c9ba0e60bbbddfed640a666e9dd9e2b23a8e64af04ea"
+  },
+  "nodeGroups": [],
+  "id": "0iaF7kR5aDGI69L1",
+  "tags": []
+}
